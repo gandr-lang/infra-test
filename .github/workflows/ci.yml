@@ -2,9 +2,68 @@ name: ci
 on:
   pull_request:
   merge_group:
+  push:
+    branches: [main]
 permissions: {}
 jobs:
   ok:
     runs-on: ubuntu-latest
     steps:
       - run: echo ok
+
+  # Stands in for the queue lanes: two upload state, a third does not.
+  produce:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - run: echo a > build-state-a.tar && echo b > build-state-b.tar
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: build-state-a.tar
+          archive: false
+          retention-days: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: build-state-b.tar
+          archive: false
+          retention-days: 1
+
+  find:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      artifacts: ${{ steps.find.outputs.artifacts }}
+    steps:
+      - id: find
+        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
+        with:
+          workflow: ci.yml
+          commit: ${{ github.sha }}
+          event: merge_group
+          workflow_conclusion: ""
+          name: ^build-state-.*\.tar$
+          name_is_regexp: true
+          dry_run: true
+          if_no_artifact_found: ignore
+      - env:
+          ARTIFACTS: ${{ steps.find.outputs.artifacts }}
+          FOUND: ${{ steps.find.outputs.found_artifact }}
+        run: printf 'found=%s\n%s\n' "$FOUND" "$ARTIFACTS"
+
+  promote-a:
+    needs: find
+    if: contains(fromJSON(needs.find.outputs.artifacts || '[]').*.name, 'build-state-a.tar')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo promote a
+
+  promote-c:
+    needs: find
+    if: contains(fromJSON(needs.find.outputs.artifacts || '[]').*.name, 'build-state-c.tar')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo promote c
