@@ -26,19 +26,24 @@ jobs:
       - id: rust-cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: probe
+          shared-key: probe-tar
           cache-workspace-crates: true
           save-if: false
       - name: build and test
+        env:
+          CARGO_LOG: cargo::core::compiler::fingerprint=info
         run: cargo test --locked -v
       - name: show build-script modes
         run: find target/debug/build -name 'build-script-build' -printf '%m %TY-%Tm-%Td %TH:%TM %p\n'
+      - name: archive build state
+        if: &state-wanted github.event_name == 'merge_group' && steps.rust-cache.outputs.cache-hit != 'true'
+        run: tar -cf "$RUNNER_TEMP/build-state.tar" target
       - name: upload build state
-        if: github.event_name == 'merge_group' && steps.rust-cache.outputs.cache-hit != 'true'
+        if: *state-wanted
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-state-${{ runner.os }}-${{ runner.arch }}
-          path: target
+          path: ${{ runner.temp }}/build-state.tar
           retention-days: 7
 
   # Promotes the landed commit's merge-group build state into main's cache.
@@ -64,7 +69,7 @@ jobs:
           if_no_artifact_found: ignore
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: probe
+          shared-key: probe-tar
           cache-workspace-crates: true
           save-if: ${{ steps.state.outputs.found_artifact == 'true' }}
       - if: steps.state.outputs.found_artifact == 'true'
@@ -75,7 +80,10 @@ jobs:
           event: merge_group
           workflow_conclusion: ""
           name: build-state-${{ runner.os }}-${{ runner.arch }}
-          path: target
+          path: ${{ runner.temp }}
+      - name: unpack build state
+        if: steps.state.outputs.found_artifact == 'true'
+        run: tar -xf "$RUNNER_TEMP/build-state.tar"
       - name: show build-script modes
         if: steps.state.outputs.found_artifact == 'true'
         run: find target/debug/build -name 'build-script-build' -printf '%m %TY-%Tm-%Td %TH:%TM %p\n'
